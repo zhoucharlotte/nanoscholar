@@ -47,8 +47,9 @@ class TestAppConfig:
         cfg = unoclaw.AppConfig(llm={"base_url": "http://localhost/v1", "model": "m"})
         assert cfg.telegram.token == ""
         assert cfg.workspace.restrict is False
-        assert cfg.scheduler_interval == 10
+        assert cfg.scheduler_interval == 60
         assert cfg.logging.level == "INFO"
+        assert cfg.agent_loop_max_iterations == 5
 
 
 # ---------------------------------------------------------------------------
@@ -229,3 +230,87 @@ class TestAgent:
 
         reply = await unoclaw.run_agent(99, "hi", mock_client, cfg)
         assert "LLM Error: API Timeout" in reply
+
+    @pytest.mark.asyncio
+    async def test_run_agent_respects_max_iterations(self):
+        """When the LLM keeps returning tool calls, the agent should stop after
+        `agent_loop_max_iterations` and produce a final summarising response.
+        """
+
+        mock_client = MagicMock()
+
+        # Response that asks for a tool call (simulates LLM tool-calling behavior)
+        tool_msg = MagicMock()
+        tool_msg.role = "assistant"
+        tool_msg.content = None
+        # Create a mock tool-call object that provides model_dump() and a .function
+        mock_tc = MagicMock()
+        mock_tc.model_dump.return_value = {"name": "list_tasks", "arguments": "{}", "id": 1}
+        mock_tc.function = mock_tc.model_dump.return_value
+        mock_tc.id = 1
+        tool_msg.tool_calls = [mock_tc]
+
+        tool_choice = MagicMock()
+        tool_choice.message = tool_msg
+
+        tool_response = MagicMock()
+        tool_response.choices = [tool_choice]
+
+        # Final summarisation response (no tool_calls)
+        sum_msg = MagicMock()
+        sum_msg.role = "assistant"
+        sum_msg.content = "FINAL_SUMMARY"
+        sum_msg.tool_calls = None
+
+        sum_choice = MagicMock()
+        sum_choice.message = sum_msg
+
+        sum_response = MagicMock()
+        sum_response.choices = [sum_choice]
+
+        MAX_ITERS = 2  # configures and verifies against this exact value throughout
+
+        cfg = unoclaw.AppConfig(
+            llm={"base_url": "http://localhost/v1", "model": "test"},
+            agent_loop_max_iterations=MAX_ITERS,
+        )
+        # list all config values for easier debugging if the assertion below fails
+        print(f"AppConfig values: {cfg.dict()}")
+        print(
+            f"Testing with agent_loop_max_iterations={cfg.agent_loop_max_iterations} (should be {MAX_ITERS})"
+        )
+        # Sanity-check: catch stale __pycache__ that silently drops unknown fields
+        assert cfg.agent_loop_max_iterations == MAX_ITERS, (
+            f"AppConfig ignored agent_loop_max_iterations={MAX_ITERS} "
+            f"(got {cfg.agent_loop_max_iterations}). Delete unoclaw/__pycache__ and retry."
+        )
+
+        # Exactly MAX_ITERS tool responses exhaust the loop, then the forced summary call
+        # gets sum_response. Using more than MAX_ITERS would hide bugs where the limit
+        # isn't honoured; using fewer would cause a StopIteration inside the loop.
+        mock_client.chat.completions.create.side_effect = [tool_response] * MAX_ITERS + [
+            sum_response
+        ]
+
+        reply = await unoclaw.run_agent(1, "run long task", mock_client, cfg)
+
+        calls = mock_client.chat.completions.create.call_args_list
+
+        # Must have made exactly MAX_ITERS loop calls + 1 forced summary — no more, no less
+        assert len(calls) == MAX_ITERS + 1, (
+            f"Expected {MAX_ITERS + 1} LLM calls ({MAX_ITERS} loop + 1 summary), got {len(calls)}"
+        )
+
+        # Every call inside the loop must allow tool use (not forced to none)
+        for call in calls[:-1]:
+            assert call.kwargs.get("tool_choice") != "none", (
+                "loop calls should allow tool use, not be forced to 'none'"
+            )
+
+        # The final call must be tool_choice="none" — the only way to prove
+        # the post-limit summarisation path was reached, not just an early exit
+        assert calls[-1].kwargs.get("tool_choice") == "none", (
+            "last call must be the forced summarisation triggered by hitting max_iterations"
+        )
+
+        assert reply == "FINAL_SUMMARY"

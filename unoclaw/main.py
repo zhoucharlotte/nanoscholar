@@ -1,9 +1,4 @@
-"""UnoClaw — minimalistic AI assistant with tool-calling, Telegram & CLI.
-
-A single-file AI agent powered by an OpenAI-compatible LLM.
-Supports sandboxed shell commands, file I/O, web fetching, persistent
-SQLite memory and an agentic background task scheduler.
-"""
+"""UnoClaw — minimalistic AI assistant with tool-calling, Telegram & CLI."""
 
 import argparse
 import asyncio
@@ -27,13 +22,11 @@ try:
 except ImportError:
     Update = None  # Telegram features will be disabled if python-telegram-bot is not installed
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 logger = logging.getLogger("unoclaw")
 
 
-# ---------------------------------------------------------------------------
 # --- Configuration Models ---
-# ---------------------------------------------------------------------------
 class TelegramCfg(BaseModel):
     token: str = ""
     allowed_usernames: list[str] = []
@@ -66,26 +59,25 @@ class AppConfig(BaseModel):
     system_prompt: str = "You are UnoClaw - personal AI assistant. Use your tools to help the user."
     logging: LoggingCfg = LoggingCfg()
     workspace: WorkspaceCfg = WorkspaceCfg()
-    scheduler_interval: int = 10
+    scheduler_interval: int = 60
     memory: MemoryCfg = MemoryCfg()
     db_name: str = "unoclaw.db"
+    agent_loop_max_iterations: int = Field(
+        5, description="Max iterations for tool-calling loops in a single agent response"
+    )
     max_context_messages: int = Field(40, description="Max messages kept per chat")
     max_context_tokens: int = Field(8000, description="Soft token budget for conversation history")
     tools_schema: list[dict[str, Any]] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
 # --- Globals ---
-# ---------------------------------------------------------------------------
 WORKSPACE_ROOT: Path = Path(".")
 WORKSPACE_RESTRICT: bool = False
 DB_PATH: Path = Path("unoclaw.db")
 TG_TOKEN = ""
 
 
-# ---------------------------------------------------------------------------
 # --- Database & Memory Logic ---
-# ---------------------------------------------------------------------------
 def init_db(db_path: str):
     """Initialize the SQLite schema for memory and scheduling."""
     with sqlite3.connect(db_path) as conn:
@@ -130,9 +122,7 @@ def search_memory(query: str, limit: int) -> str:
         return "\n---\n".join(r[0] for r in cur.fetchall())
 
 
-# ---------------------------------------------------------------------------
 # --- Native Tools ---
-# ---------------------------------------------------------------------------
 def _in_workspace(path: str) -> bool:
     try:
         return Path(path).resolve().is_relative_to(WORKSPACE_ROOT.resolve())
@@ -247,9 +237,7 @@ TOOLS_MAP = {
 }
 
 
-# ---------------------------------------------------------------------------
 # --- Background Scheduler ---
-# ---------------------------------------------------------------------------
 def _notify(text: str):
     active_chats = list(_chats.keys())
     if not active_chats:
@@ -308,9 +296,7 @@ def _scheduler_loop(interval: int, client: OpenAI, cfg: AppConfig):
         time.sleep(interval)
 
 
-# ---------------------------------------------------------------------------
 # --- Agent Core ---
-# ---------------------------------------------------------------------------
 _chats: dict[int, list[dict[str, Any]]] = {}
 
 
@@ -341,7 +327,8 @@ async def run_agent(chat_id: int, text: str, client: OpenAI, cfg: AppConfig) -> 
     _chats[chat_id][1] = {"role": "system", "content": "\n\n".join(parts)}
     _chats[chat_id].append({"role": "user", "content": text})
 
-    while True:
+    agent_iterations = 0
+    while agent_iterations < cfg.agent_loop_max_iterations:
         try:
             _chats[chat_id] = _trim_context(
                 _chats[chat_id], cfg.max_context_messages, cfg.max_context_tokens
@@ -391,11 +378,35 @@ async def run_agent(chat_id: int, text: str, client: OpenAI, cfg: AppConfig) -> 
                 )
         except Exception as e:
             return f"LLM Error: {e}"
+        agent_iterations += 1
+
+    # Max iterations reached — force a final summarising response without tools
+    try:
+        _chats[chat_id] = _trim_context(
+            _chats[chat_id], cfg.max_context_messages, cfg.max_context_tokens
+        )
+        _chats[chat_id].append(
+            {
+                "role": "user",
+                "content": "[SYSTEM: You have reached the maximum number of tool-calling steps. Summarise what you have done and what you found so far for the user.]",
+            }
+        )
+        res = client.chat.completions.create(
+            model=cfg.llm.model,
+            messages=_chats[chat_id],
+            tool_choice="none",
+        )
+        summary = res.choices[0].message.content or ""
+        msg_dict = {"role": "assistant", "content": summary}
+        _chats[chat_id].append(msg_dict)
+        if summary:
+            save_memory(f"User: {text}\nAgent (truncated): {summary}")
+        return summary or "[Reached maximum steps with no final answer.]"
+    except Exception as e:
+        return f"[Reached maximum steps. Could not summarise: {e}]"
 
 
-# ---------------------------------------------------------------------------
 # --- Telegram & CLI Lifecycle ---
-# ---------------------------------------------------------------------------
 async def _tg_handle(update: "Update", ctx: Any):
     bd = ctx.application.bot_data
     if update.effective_user.username not in bd["cfg"].telegram.allowed_usernames:
