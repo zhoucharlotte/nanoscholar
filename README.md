@@ -1,307 +1,263 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/2coderok/unoclaw/main/assets/unoclaw_text_logo.png" alt="UnoClaw" width="500">
-</p>
+# Nanoscholar
 
-<h1 align="center">🦾 UnoClaw — Minimalistic AI Assistant</h1>
+Nanoscholar 是一个本地研究助手，主要面向论文检索、PDF 解析、知识库沉淀、工具调用式分析，以及小型多 Agent 协作流程。它默认以 CLI 方式运行，也可以按配置接入 Telegram。
 
-<p align="center">
-  <strong>SINGLE FILE. CONFIG-DRIVEN. SQLITE MEMORY.</strong>
-</p>
+这个项目的核心目标不是做一个泛用聊天机器人，而是把一条更稳定的研究工作流串起来：
 
-<p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/Python-3.10+-yellow.svg?style=for-the-badge" alt="Python 3.10+"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Dependencies-Pydantic%20%7C%20OpenAI-blue.svg?style=for-the-badge" alt="Dependencies"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-</p>
+- 从标题、arXiv ID 或关键词检索论文
+- 下载并解析 PDF
+- 将结构化结果写入本地知识库
+- 后续追问直接复用知识库，而不是反复下载和提取
 
-**UnoClaw** is a _lightweight, self-contained, single file AI agent_ that runs locally. 
-It answers you on **Telegram** or via an interactive **CLI**. It connects to any OpenAI-compatible LLM (local or remote), manages a permanent SQLite memory, triggers its own background tasks, and exposes a set of sandboxed tools the model can call autonomously — all in under 500 lines of Python (with ~60 of those being just comments and extra whitespace for readability)
+## 主要功能
 
-Inspired by **OpenClaw** and the minimalist philosophy of  **NanoBot**, we put a strong emphasis on **simplicity and readability**. Because the entire core logic lives in a single file, you can easily read it from top to bottom, hack it to your exact needs, or use it as a learning resource to understand how AI agents and tool-calling work under the hood.
+- 论文一体化入库：`ingest_paper`
+  - 优先搜索 arXiv
+  - 必要时回退到 Semantic Scholar
+  - 自动下载 arXiv PDF
+  - 自动提取正文
+  - 自动写入 `knowledge_base/notes`
+- 零模型依赖 PDF 解析
+  - 基于 PyMuPDF 文本块坐标
+  - 几何驱动的阅读顺序恢复
+  - 双栏检测与分离
+  - 页眉页脚过滤
+- 工具路由与裁剪
+  - 关键词意图识别
+  - 示例查询匹配
+  - 最近工具历史继承
+  - 对研究类请求自动收窄工具集合，减少错误 detour
+- 本地记忆与知识库
+  - SQLite 持久化记忆
+  - 去重和噪声过滤
+  - 本地 Markdown 知识库
+  - 支持列出知识库中的论文条目
+- 多 Agent 支持
+  - 子 Agent 独立进程运行
+  - `Planner -> Researcher` 协作链路
+  - 支持并发子任务
+- 后台调度
+  - 让助手在未来某个时间点自动执行自然语言任务
 
-Check it out if you want to play around with AI driven assistant that is highly hackable, requires zero external databases and lives in a single file.
+## 项目结构
 
-[GitHub Repository](https://github.com/2coderok/unoclaw) · [Installation](#installation) · [Quick Start](#quick-start-tldr) · [Configuration](#configuration) · [Extending & Tools](#extending-unoclaw-adding-skills--tools) · [Security](#security-model-important)
-
-## Installation
-
-Runtime: **Python ≥ 3.10**.
-
-### 🚀 Using uv (Recommended)
-[uv](https://github.com/astral-sh/uv) is the fastest way to install and manage **unoclaw**.
-
-**As a global tool with Telegram:**
-```bash
-uv tool install unoclaw --with "unoclaw[telegram]"
+```text
+nanoscholar/
+  core/            Agent 主循环、上下文、权限、子 Agent 运行时
+  interfaces/      CLI 和 Telegram 入口
+  knowledge/       知识库索引与检索
+  mcp/             MCP client/server 协议层
+  tools/           工具注册、工具路由、系统工具与领域工具
+configs/
+docs/
+knowledge_base/
+papers/
+tests/
+RESEARCH.md
 ```
 
-**As a global tool CLI only (no Telegram):**
-```bash
-uv tool install unoclaw
-```
+## 运行环境
 
-### From PyPI with Telegram
-```bash
-pip install "unoclaw[telegram]"
-```
+- Python 3.10+
+- Windows、macOS 或 Linux
+- 可以访问论文检索和 PDF 下载所需网络
+- 一个兼容 OpenAI Chat Completions API 的模型服务
 
-### From PyPI without Telegram
-```bash
-pip install unoclaw
-```
+## 安装
 
-### From Source (For Hacking/Development)
-If you want to modify the code or contribute, we recommend using uv for a seamless experience:
-```bash
-git clone [https://github.com/2coderok/unoclaw.git](https://github.com/2coderok/unoclaw.git)
-cd unoclaw
-
-# Create environment and install all dependencies (including dev tools)
-uv sync --all-extras
-```
-
-Alternatively, using standard pip:
-```bash
-git clone [https://github.com/2coderok/unoclaw.git](https://github.com/2coderok/unoclaw.git)
-cd unoclaw
-
-# Create a virtual environment
+```powershell
+cd D:\Projects\nanoscholar
 python -m venv .venv
-source .venv/bin/activate  # (Windows: .venv\Scripts\activate)
-
-# Install in editable mode with Telegram and Dev support
-pip install -e ".[telegram,dev]"
+& .\.venv\Scripts\activate
+pip install -e .
 ```
 
-## Quick start (TL;DR)
+如果你需要 Telegram 支持：
 
-1. **Configure:** Copy the example config and add your llm endpoint/telegram settings.
-   ```bash
-   cp config.example.json config.json
-   ```
-2. **Run:** Start the agent in your terminal using the conifg.
-   ```bash
-   unoclaw --config path/to/your/config.json
-   ```
+```powershell
+pip install -e .[telegram]
+```
 
-   UnoClaw will look for `config.json` in current working directory if --config was not provided.
+## 配置
 
-If you provided a `telegram.token`, it will start polling immediately. If omitted, it will drop you into the interactive CLI mode. 
-
-## Highlights
-
-- **Agentic Scheduler** — Background loop triggers the LLM to autonomously perform scheduled prompts.
-- **SQLite Memory** — Seamless, permanent conversation and task storage without messy text files.
-- **Tool-calling** — The LLM can execute shell commands, read/write files, and fetch web pages.
-- **Telegram + CLI** — Runs as a Telegram bot; falls back to CLI when no token is configured.
-- **Workspace sandboxing** — Optionally restricts all file and command access to a single directory.
-- **Async tool dispatch** — Tool functions run in threads via `asyncio.to_thread()`.
-
-## Everything we built so far
-
-### Core platform
-- **Context trimming:** Chat history is automatically trimmed by message count and token heuristics (`max_context_tokens`, `max_context_messages`).
-- **Config validation:** Pydantic models validate `config.json` at startup with clear error messages.
-- **Agent Loop:** Handles native tool-calling natively through the official OpenAI SDK structure. 
-
-### Memory & Persistence
-- **Automatic Storage:** Every time the LLM replies to the user, the exchange is automatically saved to the `memory` SQLite table.
-- **On-Demand Recall:** When the user sends a new message, UnoClaw scans it for keywords, queries the database, and invisibly injects relevant historical memories directly into the LLM's system prompt.
-
-### Tools + automation
-- **Native Tools:** `execute_command`, `read_file`, `write_file`, `read_web`.
-- **Task Management:** `add_task`, `list_tasks`, `remove_task`.
-- **Agentic Cron:** Unlike traditional schedulers, UnoClaw saves *natural language prompts* to the DB. When the timer hits zero, the background thread wakes up and messages the LLM: `[SYSTEM: AUTOMATED BACKGROUND TASK TRIGGERED]: <prompt>`. The agent autonomously executes tools and sends you a message with the result.
-
-## How it works (short)
+仓库内提供了一个公开可提交的模板配置：
 
 ```text
-Telegram / CLI User                  config.json & .md docs
-              │                                      │
-              ▼                                      ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                         UnoClaw (main.py)                        │
-│                                                                  │
-│  ┌────────────────────┐   trigger    ┌────────────────────────┐  │
-│  │  Scheduler Loop    ├─────────────►│     The Agent Loop     │  │
-│  │ (Background Tasks) │              │  (Context & Reasoning) │  │
-│  └──────────┬─────────┘              └──────┬─────────┬───────┘  │
-└─────────────┼───────────────────────────────┼─────────┼──────────┘
-              │ check tasks                   │         │
-              │                               │         │ execute
-              ▼                  read/write   │         ▼
-        ┌────────────┐◄───────────────────────┤   ┌──────────────┐
-        │ SQLite DB  │                        │   │ Native Tools │
-        │(unoclaw.db)│                        │   │(Shell, File, │
-        └────────────┘                        │   │ Web Reader)  │
-                                              │   └──────────────┘
-                                  prompt &    │
-                                 tool_calls   ▼
-                               ┌─────────────────────────┐
-                               │  OpenAI-Compatible LLM  │
-                               │  (Ollama, Groq, etc.)   │
-                               └─────────────────────────┘
+configs/config.example.yaml
 ```
 
-## Supported LLMs
+建议先复制一份：
 
-Because UnoClaw uses the standard OpenAI SDK with a configurable `base_url`, it supports **virtually any Large Language Model** that exposes an OpenAI-compatible API endpoint. 
-
-This means you are not locked into a single provider. You can seamlessly switch between local open-source models and powerful cloud APIs just by changing two lines in your `config.json`.
-
-### Local Inference Engines (Free & Private)
-If you have the hardware, you can run models entirely locally. Just point UnoClaw's `base_url` to your local server:
-- **Ollama:** `http://localhost:11434/v1` (Supports Llama 3, Qwen, Mistral, Phi, etc.)
-- **LM Studio:** `http://localhost:1234/v1`
-- **vLLM:** `http://localhost:8000/v1`
-- **Llama.cpp (Server):** `http://localhost:8080/v1`
-- **Text-Generation-WebUI (Oobabooga):** `http://localhost:5000/v1`
-
-### Cloud API Providers
-If you want to use hosted models, just paste your API key and their base URL into the config:
-- **OpenAI:** GPT-4o, GPT-4-turbo, GPT-3.5
-- **Groq:** Ultra-fast inference for open-source models (Llama 3, Mixtral)
-- **OpenRouter:** Access to hundreds of models including Claude, Gemini, and DeepSeek through a single unified API.
-- **Together AI:** Hosted open-source models.
-- **DeepSeek:** Direct API access to DeepSeek models.
-- **Mistral API:** Direct access to Mistral Large, Nemo, etc.
-
-### Minimum Model Requirements
-To fully utilize UnoClaw's features, the model you choose **must support Tool Calling (Function Calling)**. 
-- *Recommended Open-Source:* Qwen 2.5 (Instruct), Llama 3.1 (Instruct), or Mistral Nemo. 
-- *Recommended Cloud:* GPT-4o, Claude 3.5 Sonnet (via OpenRouter), or Groq-hosted Llama 3.1.
-
-## Configuration
-
-Settings live in `config.json`. Missing required fields (like `llm`) will produce a clear validation error on startup.
-
-```json5
-{
-  "telegram": {
-    "token": "YOUR_BOT_TOKEN",
-    "allowed_usernames": ["your_handle"]
-  },
-  "llm": {
-    "base_url": "http://localhost:8088/v1",
-    "model": "qwen2.5-7b-instruct",
-    "api_key": "not-needed"
-  },
-  "workspace": {
-    "path": ".",
-    "restrict": true
-  },
-  "max_context_tokens": 8000,
-  "max_context_messages": 40
-}
+```powershell
+Copy-Item configs\config.example.yaml configs\config.yaml
 ```
 
-### Context Limits & Soft Token Budgets
-To prevent runaway API costs and context-window crashes, UnoClaw manages conversation history using a soft token budget:
-- `max_context_tokens`: UnoClaw estimates the token count of your active conversation. If it exceeds this limit, it automatically prunes the oldest messages (while always preserving your system prompts).
-- `max_context_messages`: The absolute maximum number of back-and-forth messages kept in the active LLM context before older messages are trimmed.
+然后重点填写这些字段：
 
-*Note: For the full schema, check `config.example.json`.*
+- `llm.base_url`
+- `llm.api_key`
+- `llm.model`
+- `workspace.path`
+- `logging.file`
+- `permissions.approval.mode`
+- `telegram.token`
 
-## The System Prompt (`AGENT.md` & `SKILLS.md`)
+当前模板默认使用：
 
-UnoClaw builds its system prompt dynamically on startup by reading two markdown files from the `docs/` directory. You can (and should) edit these to completely customize your assistant.
+- `https://api.openai.com/v1`
+- `gpt-4.1-mini`
+- 工作区限制模式
+- 对 `execute_command` 和 `write_file` 启用审批
+- 对明显安全的只读命令启用自动放行
 
-### `docs/AGENT.md` (Core Personality & Rules)
-This file defines *who* the agent is, its core rules, and its constraints. Use this file to set the agent's behavior:
-* **Personality:** e.g., "You are a sarcastic but highly skilled DevOps engineer."
-* **Formatting Rules:** e.g., "Always provide code snippets without markdown blocks."
-* **Environment Context:** Tell the LLM what OS it is running on! Add a line like `You are running on Windows 11 using PowerShell.` or `You are running on Ubuntu Linux 22.04.` to ensure it uses the correct syntax (`dir` vs `ls`) when executing autonomous shell commands.
+## 启动方式
 
-### `docs/SKILLS.md` (Tool Documentation)
-This file defines *what* the agent can do. It is appended directly below the `AGENT.md` text and contains the documentation for your Native Tools and the step-by-step logic for your Composite Skills (detailed in the next section).
+CLI：
 
-## Extending UnoClaw (Adding Skills & Tools)
-
-UnoClaw is designed to be highly hackable. You can give it new superpowers in two ways: by writing plain English workflows (Composite Skills) or by writing native Python functions (Native Tools).
-
-### 1. The "No-Code" Way: Composite Skills
-Because UnoClaw connects to powerful LLMs, you do not need to write a new Python script for every minor feature. You can simply teach the agent a "workflow" by editing the `SKILLS.md` file and instructing it to use its existing tools (like `read_web` or `read_file`).
-
-To add a new skill, just append a clear, step-by-step instruction block to `SKILLS.md`.
-
-**Example: Adding a Bitcoin Price Tracker**
-Paste the following into your `SKILLS.md` file. UnoClaw will read this and instantly know how to pull real-time crypto prices without any new Python code:
-
-```markdown
-### get_bitcoin_price_usd
-* **Trigger:** When the user asks for the current Bitcoin or BTC price.
-* **Execution Workflow:** 1. Call the `read_web` tool with the URL: `https://min-api.cryptocompare.com/data/generateAvg?fsym=BTC&tsym=USD&e=coinbase`
-    2. Analyze the returned JSON text.
-    3. Locate the `RAW` object, and extract the numeric value associated with the `PRICE` field.
-    4. Respond to the user using exactly this format: `BTC price is <PRICE> USD`.
+```powershell
+cd D:\Projects\nanoscholar
+& .\.venv\Scripts\python.exe -m nanoscholar -c configs\config.yaml
 ```
 
-### 2. The Python Way: Native Tools
-If you need UnoClaw to interact with a specific local database, control hardware, or execute complex logic, you can easily add a native tool directly inside `unoclaw.py`.
+查看帮助：
 
-**Step 1: Define your Python function**
-Write your function inside `unoclaw.py`. **Crucially**, you must include type hints and a clear docstring. UnoClaw parses this to automatically generate the tool schema for the LLM.
-
-```python
-def get_system_uptime() -> str:
-    """
-    Returns the current uptime of the host machine.
-    Call this when the user asks how long the server has been running.
-    """
-    import uptime
-    return f"System has been running for {uptime.uptime()} seconds."
+```powershell
+& .\.venv\Scripts\python.exe -m nanoscholar -h
 ```
 
-**Step 2: Register the tool**
-Find the `available_tools` dictionary in `unoclaw.py` and map your new function:
-
-```python
-available_tools = {
-    "execute_command": execute_command,
-    "read_file": read_file,
-    "write_file": write_file,
-    "read_web": read_web,
-    "get_system_uptime": get_system_uptime, # <-- Your new tool registered here
-}
-```
-
-**Step 3: Document the tool for the LLM**
-Finally, open your `AGENT.md` or `SKILLS.md` file and add an entry so the LLM knows the tool exists, what it does, and what parameters it requires. 
-
-Add this to `SKILLS.md` under the Native Tools section:
-
-```markdown
-### get_system_uptime
-* **Description:** Returns the current uptime of the host machine in seconds. Use this when asked about server status or uptime.
-* **Parameters:** None.
-```
-
-## Security model (important)
-
-UnoClaw connects to your host environment. Treat tool access with care!
-
-- **Workspace restriction:** When `workspace.restrict` is `true`, the agent cannot access files outside `workspace.path`, run `cd` commands with absolute paths, or make network requests.
-- **Allowed usernames:** In Telegram mode, only users listed in `telegram.allowed_usernames` can interact with the bot. Any other user is silently ignored.
-- **Shell access:** The `execute_command` tool runs arbitrary shell commands. Use workspace restriction and allowed-user lists to limit exposure.
-- **No credential storage:** Never commit `config.json` to version control.
-
-## Project Structure
+## CLI 命令
 
 ```text
-unoclaw/
-├── LICENSE                    # License file
-├── README.md                  # This file
-├── pyproject.toml             # Build configuration
-├── .gitignore
-├── assets/
-│   └── unoclaw_text_logo.png  # UnoClaw logo
-├── tests/
-│   └── test_unoclaw.py        # Test suite (pytest)
-└── unoclaw/            
-    ├── __init__.py
-    ├── main.py                # The entire agent — single file
-    ├── config.example.json    # Template configuration
-    └── docs/           
-        ├── AGENT.md           # Auto-loaded agent instructions
-        └── SKILLS.md          # Auto-loaded agent skills
+/clear          清空当前对话上下文
+/clear-all      清空所有保存的对话上下文
+/compact        压缩旧上下文，仅保留最近工作窗口
+/rewind         恢复压缩前的上下文
+/memory-stats   查看持久化记忆统计
+/memory-clear   清空持久化记忆
+/exit           退出
 ```
+
+## 推荐研究工作流
+
+### 1. 搜索某个方向的相关论文
+
+示例：
+
+```text
+找一下 agent memory compression 相关论文
+你找找 agent 自进化相关的论文
+```
+
+典型工具链：
+
+- `arxiv_search`
+- `semantic_scholar_search`
+
+### 2. 分析某一篇明确论文
+
+示例：
+
+```text
+2510.07985v3 你下载来分析分析
+Lightweight LLM Agent Memory with Small Language Models 帮我看看
+```
+
+典型工具链：
+
+- `ingest_paper`
+
+对于这类明确论文请求，只要 `ingest_paper` 成功，系统会优先基于入库结果直接回答，而不是继续发散到无关搜索。
+
+### 3. 对已入库论文继续追问
+
+示例：
+
+```text
+这篇论文的方法细节是什么
+它的实验结果怎么样
+```
+
+典型工具链：
+
+- `search_my_notes`
+- 或直接复用已缓存的 `ingest_paper` 结果
+
+### 4. 查看知识库里已经有哪些论文
+
+示例：
+
+```text
+我的知识库里有哪些论文
+列出知识库里的笔记
+```
+
+典型工具链：
+
+- `list_my_notes`
+
+这样做的目的是避免为了“列清单”而错误地调用 shell 去枚举目录。
+
+## 数据存储位置
+
+Nanoscholar 主要把运行状态存到三个位置：
+
+- `nanoscholar.db`
+  - SQLite 数据库，保存记忆和调度任务
+- `papers/`
+  - 下载下来的 arXiv PDF
+- `knowledge_base/`
+  - `notes/`：结构化 Markdown 笔记
+  - `index.json`：知识库索引
+
+## 工具召回机制
+
+模型不是每轮都看到全部工具，而是先经过一层工具路由：
+
+1. 关键词意图匹配
+2. 示例查询相似度匹配
+3. 最近工具历史继承
+4. 针对特定上下文做工具裁剪
+
+例如在论文研究场景下，系统会主动隐藏一些容易带偏的工具路径，比如不必要的 shell detour 或直接抓原始学术搜索页。
+
+## 测试与检查
+
+基础检查：
+
+```powershell
+& .\.venv\Scripts\python.exe -m compileall nanoscholar tests
+pytest
+```
+
+快速入口检查：
+
+```powershell
+& .\.venv\Scripts\python.exe -m nanoscholar -h
+```
+
+## 当前限制
+
+- arXiv 和 Semantic Scholar 依然可能独立失败，例如 API 不稳定、超时或限流。
+- 当前工具路由主要是规则驱动，不是学习式检索，所以极端措辞仍可能导致不理想召回。
+- 旧知识库笔记如果内容不完整或误匹配，可能需要手动清理，或者使用 `force_refresh=true` 重建。
+- 这个项目偏重“实用研究助手”，不是完备的论文管理平台，也不是严格意义上的文献数据库系统。
+
+## 发布到 GitHub 前的注意事项
+
+仓库当前已经做了两层公开化处理：
+
+- `configs/config.yaml` 已去敏
+- `.gitignore` 已忽略本地运行数据、PDF、知识库内容、数据库和日志
+
+但你在公开前仍然建议检查这些内容是否还需要清理：
+
+- `nanoscholar.db`
+- `nanoscholar.log`
+- `mcp_server_debug.log`
+- `papers/`
+- `knowledge_base/notes/`
+- `knowledge_base/index.json`
+
+## License
+
+见 [LICENSE](LICENSE)。

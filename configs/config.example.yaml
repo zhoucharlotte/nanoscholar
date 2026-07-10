@@ -1,0 +1,53 @@
+﻿telegram:
+  token: ""
+  allowed_usernames: []
+
+llm:
+  base_url: "https://api.openai.com/v1"
+  api_key: "YOUR_API_KEY_HERE"
+  model: "gpt-4.1-mini"
+
+system_prompt: "You are Nanoscholar - a local research assistant. Use your tools to help the user."
+
+logging:
+  enabled: true
+  file: "nanoscholar.log"
+  level: "INFO"
+
+workspace:
+  path: "."
+  restrict: true
+
+scheduler_interval: 60
+
+memory:
+  search_max_results: 10
+  enabled: true
+
+db_name: "nanoscholar.db"
+
+agent_loop_max_iterations: 5
+max_context_messages: 10
+max_context_tokens: 8000
+
+tools_schema: []
+
+permissions:
+  sandbox_enabled: true
+  sandbox:
+    commands:
+      allowed: ["*"]
+      denied: ["rm*", "del*", "format*", "shutdown*", "reg*", "taskkill*"]
+      default: prompt
+    files:
+      read_allowed_paths: ["."]
+      write_allowed_paths: ["."]
+      default: prompt
+    network:
+      allowed_domains: []
+      denied_domains: ["localhost", "127.0.0.1", "10.*", "172.*", "192.168.*"]
+      default: prompt
+  approval:
+    mode: always-ask
+    require_for: ["execute_command", "write_file"]
+    bypass_safe_commands: true

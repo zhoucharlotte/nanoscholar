@@ -26,3 +26,20 @@ Thumbs.db
 # Project runtime data
 config.json
 *.log
+*.db
+*.sqlite
+*.sqlite3
+mcp_server_debug.log
+
+# Local configuration
+configs/config.yaml
+
+# Research cache and artifacts
+papers/
+knowledge_base/notes/
+knowledge_base/index.json
+arxiv_cache.db
+
+# Local assistant state
+chats.json
+chats_backup.json
