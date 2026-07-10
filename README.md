@@ -1,263 +1,180 @@
 # Nanoscholar
 
-Nanoscholar 是一个本地研究助手，主要面向论文检索、PDF 解析、知识库沉淀、工具调用式分析，以及小型多 Agent 协作流程。它默认以 CLI 方式运行，也可以按配置接入 Telegram。
+Nanoscholar 是一个面向本地运行场景的研究助手项目。它支持命令行交互、论文检索、arXiv PDF 下载与解析、知识库笔记沉淀、上下文压缩、工具路由，以及基于子 Agent 的研究协作流程。
 
-这个项目的核心目标不是做一个泛用聊天机器人，而是把一条更稳定的研究工作流串起来：
-
-- 从标题、arXiv ID 或关键词检索论文
-- 下载并解析 PDF
-- 将结构化结果写入本地知识库
-- 后续追问直接复用知识库，而不是反复下载和提取
+这个项目的目标不是做一个完整的文献管理平台，而是提供一套偏实用、可扩展、可本地控制的研究工作流底座。
 
 ## 主要功能
 
-- 论文一体化入库：`ingest_paper`
-  - 优先搜索 arXiv
-  - 必要时回退到 Semantic Scholar
-  - 自动下载 arXiv PDF
-  - 自动提取正文
-  - 自动写入 `knowledge_base/notes`
-- 零模型依赖 PDF 解析
-  - 基于 PyMuPDF 文本块坐标
-  - 几何驱动的阅读顺序恢复
-  - 双栏检测与分离
-  - 页眉页脚过滤
-- 工具路由与裁剪
-  - 关键词意图识别
-  - 示例查询匹配
-  - 最近工具历史继承
-  - 对研究类请求自动收窄工具集合，减少错误 detour
-- 本地记忆与知识库
-  - SQLite 持久化记忆
-  - 去重和噪声过滤
-  - 本地 Markdown 知识库
-  - 支持列出知识库中的论文条目
-- 多 Agent 支持
-  - 子 Agent 独立进程运行
-  - `Planner -> Researcher` 协作链路
-  - 支持并发子任务
-- 后台调度
-  - 让助手在未来某个时间点自动执行自然语言任务
+- 论文检索：支持 `arxiv_search`、`semantic_scholar_search`
+- 论文读取：支持 `ingest_paper` 一键检索、下载、提取、入库
+- PDF 解析：基于 PyMuPDF 的正文提取，并带双栏阅读顺序修正
+- 本地知识库：支持保存、检索、列出论文笔记
+- 工具路由：根据用户问题裁剪工具 Schema，减少无关工具暴露
+- 上下文管理：支持清空上下文、会话裁剪与渐进式压缩
+- 子 Agent 协作：支持 Planner / Researcher 风格的多任务拆分
+- 权限控制：支持沙箱、审批、只读安全命令自动放行
+- CLI 使用：支持本地命令行直接运行
 
 ## 项目结构
 
 ```text
-nanoscholar/
-  core/            Agent 主循环、上下文、权限、子 Agent 运行时
-  interfaces/      CLI 和 Telegram 入口
-  knowledge/       知识库索引与检索
-  mcp/             MCP client/server 协议层
-  tools/           工具注册、工具路由、系统工具与领域工具
-configs/
-docs/
-knowledge_base/
-papers/
-tests/
-RESEARCH.md
+Nanoscholar/
+├─ configs/                  # 配置文件
+├─ docs/                     # 文档
+├─ nanoscholar/              # 主包
+│  ├─ core/                  # Agent、上下文、权限、审批等核心逻辑
+│  ├─ interfaces/            # 外部接口层
+│  ├─ knowledge/             # 本地知识库存储
+│  ├─ mcp/                   # MCP 客户端
+│  └─ tools/                 # 工具注册、路由、论文/系统工具
+├─ tests/                    # 测试
+├─ RESEARCH.md               # 研究工作流补充说明
+├─ pyproject.toml            # 项目元信息
+└─ README.md
 ```
-
-## 运行环境
-
-- Python 3.10+
-- Windows、macOS 或 Linux
-- 可以访问论文检索和 PDF 下载所需网络
-- 一个兼容 OpenAI Chat Completions API 的模型服务
 
 ## 安装
 
-```powershell
-cd D:\Projects\nanoscholar
+推荐使用 Python 3.10 及以上版本。
+
+```bash
+git clone https://github.com/zhoucharlotte/nanoscholar.git
+cd nanoscholar
 python -m venv .venv
-& .\.venv\Scripts\activate
+.venv\Scripts\activate
 pip install -e .
 ```
 
 如果你需要 Telegram 支持：
 
-```powershell
+```bash
 pip install -e .[telegram]
 ```
 
 ## 配置
 
-仓库内提供了一个公开可提交的模板配置：
+复制配置模板并填写自己的参数：
 
-```text
-configs/config.example.yaml
+```bash
+copy configs\config.example.yaml configs\config.yaml
 ```
 
-建议先复制一份：
+核心配置项示例：
 
-```powershell
-Copy-Item configs\config.example.yaml configs\config.yaml
+```yaml
+llm:
+  base_url: "https://api.openai.com/v1"
+  api_key: "YOUR_API_KEY_HERE"
+  model: "gpt-4.1-mini"
 ```
 
-然后重点填写这些字段：
+其他常用配置：
 
-- `llm.base_url`
-- `llm.api_key`
-- `llm.model`
-- `workspace.path`
-- `logging.file`
-- `permissions.approval.mode`
-- `telegram.token`
-
-当前模板默认使用：
-
-- `https://api.openai.com/v1`
-- `gpt-4.1-mini`
-- 工作区限制模式
-- 对 `execute_command` 和 `write_file` 启用审批
-- 对明显安全的只读命令启用自动放行
+- `db_name`：本地数据库文件名
+- `logging.file`：日志文件路径
+- `agent_loop_max_iterations`：单轮最大工具调用迭代数
+- `max_context_messages` / `max_context_tokens`：上下文裁剪阈值
+- `permissions.approval.mode`：审批模式
+- `permissions.approval.bypass_safe_commands`：安全只读命令自动通过
 
 ## 启动方式
 
-CLI：
+在仓库根目录运行：
+
+```bash
+python -m nanoscholar -c configs\config.yaml
+```
+
+如果你使用的是 Windows 虚拟环境：
 
 ```powershell
-cd D:\Projects\nanoscholar
 & .\.venv\Scripts\python.exe -m nanoscholar -c configs\config.yaml
 ```
 
-查看帮助：
+启动后进入 CLI 模式，可以直接输入问题，例如：
 
-```powershell
-& .\.venv\Scripts\python.exe -m nanoscholar -h
+```text
+INTER: Mitigating Hallucination in Large Vision-Language Models by Interaction Guidance Sampling 找一下这篇论文并告诉我有什么启发
 ```
 
 ## CLI 命令
 
-```text
-/clear          清空当前对话上下文
-/clear-all      清空所有保存的对话上下文
-/compact        压缩旧上下文，仅保留最近工作窗口
-/rewind         恢复压缩前的上下文
-/memory-stats   查看持久化记忆统计
-/memory-clear   清空持久化记忆
-/exit           退出
-```
+项目当前以自然语言交互为主，常见能力包括：
 
-## 推荐研究工作流
+- 让系统查找某篇论文
+- 让系统下载并解析指定 arXiv ID
+- 查看知识库里已经沉淀的论文
+- 清空当前会话上下文
+- 使用子 Agent 做研究拆分
 
-### 1. 搜索某个方向的相关论文
+如果你需要扩展成显式命令模式，可以在 `nanoscholar/main.py` 和 `nanoscholar/core/agent.py` 上继续加入口命令。
 
-示例：
+## 研究工作流
 
-```text
-找一下 agent memory compression 相关论文
-你找找 agent 自进化相关的论文
-```
+当前论文相关任务的推荐路径是：
 
-典型工具链：
+1. 优先使用 `ingest_paper`
+2. 必要时调用 `arxiv_search` / `semantic_scholar_search`
+3. 下载 PDF 到本地 `papers/`
+4. 使用 `pdf_extract_text` 提取全文
+5. 生成摘要并保存到 `knowledge_base/notes/`
 
-- `arxiv_search`
-- `semantic_scholar_search`
+其中 `ingest_paper` 已经负责把“搜索、下载、提取、知识库沉淀”串起来，适合处理：
 
-### 2. 分析某一篇明确论文
-
-示例：
-
-```text
-2510.07985v3 你下载来分析分析
-Lightweight LLM Agent Memory with Small Language Models 帮我看看
-```
-
-典型工具链：
-
-- `ingest_paper`
-
-对于这类明确论文请求，只要 `ingest_paper` 成功，系统会优先基于入库结果直接回答，而不是继续发散到无关搜索。
-
-### 3. 对已入库论文继续追问
-
-示例：
-
-```text
-这篇论文的方法细节是什么
-它的实验结果怎么样
-```
-
-典型工具链：
-
-- `search_my_notes`
-- 或直接复用已缓存的 `ingest_paper` 结果
-
-### 4. 查看知识库里已经有哪些论文
-
-示例：
-
-```text
-我的知识库里有哪些论文
-列出知识库里的笔记
-```
-
-典型工具链：
-
-- `list_my_notes`
-
-这样做的目的是避免为了“列清单”而错误地调用 shell 去枚举目录。
+- arXiv ID
+- arXiv 链接
+- DOI
+- 比较明确的论文标题
 
 ## 数据存储位置
 
-Nanoscholar 主要把运行状态存到三个位置：
+默认运行时会在仓库内生成这些数据：
 
-- `nanoscholar.db`
-  - SQLite 数据库，保存记忆和调度任务
-- `papers/`
-  - 下载下来的 arXiv PDF
-- `knowledge_base/`
-  - `notes/`：结构化 Markdown 笔记
-  - `index.json`：知识库索引
+- `nanoscholar.db`：本地数据库
+- `nanoscholar.log`：主日志
+- `mcp_server_debug.log`：MCP 调试日志
+- `papers/`：下载的论文 PDF
+- `knowledge_base/notes/`：论文笔记与知识卡片
+- `knowledge_base/index.json`：知识库索引
+
+这些内容默认已经加入 `.gitignore`，适合本地保留、远程仓库忽略。
 
 ## 工具召回机制
 
-模型不是每轮都看到全部工具，而是先经过一层工具路由：
+项目当前不是学习式检索，而是“规则 + 轻量匹配”的路由机制。
 
-1. 关键词意图匹配
-2. 示例查询相似度匹配
-3. 最近工具历史继承
-4. 针对特定上下文做工具裁剪
+主要流程在 `nanoscholar/tools/router.py`：
 
-例如在论文研究场景下，系统会主动隐藏一些容易带偏的工具路径，比如不必要的 shell detour 或直接抓原始学术搜索页。
+1. 先做关键词和意图判断
+2. 再做离线示例匹配
+3. 按意图裁剪工具集合
+4. 对研究类问题优先暴露论文相关工具
+5. 对精确论文请求优先走 `ingest_paper`
+
+对于“我的知识库里有哪些论文”这类请求，系统会优先召回 `list_my_notes`，而不是走命令执行工具。
 
 ## 测试与检查
 
-基础检查：
+你可以先做最基本的运行检查：
 
-```powershell
-& .\.venv\Scripts\python.exe -m compileall nanoscholar tests
+```bash
+python -m nanoscholar -h
+python -m compileall nanoscholar tests
+```
+
+也可以运行测试：
+
+```bash
 pytest
 ```
 
-快速入口检查：
+如果你只想验证导入链是否正常：
 
-```powershell
-& .\.venv\Scripts\python.exe -m nanoscholar -h
+```bash
+python -c "import nanoscholar, nanoscholar.main, nanoscholar.mcp.client, nanoscholar.tools.router; print('ok')"
 ```
-
-## 当前限制
-
-- arXiv 和 Semantic Scholar 依然可能独立失败，例如 API 不稳定、超时或限流。
-- 当前工具路由主要是规则驱动，不是学习式检索，所以极端措辞仍可能导致不理想召回。
-- 旧知识库笔记如果内容不完整或误匹配，可能需要手动清理，或者使用 `force_refresh=true` 重建。
-- 这个项目偏重“实用研究助手”，不是完备的论文管理平台，也不是严格意义上的文献数据库系统。
-
-## 发布到 GitHub 前的注意事项
-
-仓库当前已经做了两层公开化处理：
-
-- `configs/config.yaml` 已去敏
-- `.gitignore` 已忽略本地运行数据、PDF、知识库内容、数据库和日志
-
-但你在公开前仍然建议检查这些内容是否还需要清理：
-
-- `nanoscholar.db`
-- `nanoscholar.log`
-- `mcp_server_debug.log`
-- `papers/`
-- `knowledge_base/notes/`
-- `knowledge_base/index.json`
 
 ## License
 
-见 [LICENSE](LICENSE)。
+本项目使用 [MIT License](./LICENSE)。
